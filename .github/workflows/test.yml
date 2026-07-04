@@ -1,0 +1,61 @@
+name: Test and Build
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install build pytest
+        pip install -e .
+
+    - name: Test package build
+      run: python -m build
+
+    - name: Test package installation
+      run: |
+        pip install dist/*.whl
+        python -c "import meta_ads_mcp; print('Package imported successfully')"
+
+  validate-version:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Check out code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.10"
+        
+    - name: Check pyproject.toml and server.json versions match
+      run: |
+        PY_VERSION=$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/version = "([^"]+)"/\1/')
+        JSON_VERSION=$(python -c "import json; print(json.load(open('server.json'))['version'])")
+        echo "pyproject.toml version: $PY_VERSION"
+        echo "server.json version:    $JSON_VERSION"
+        if [ "$PY_VERSION" != "$JSON_VERSION" ]; then
+          echo "::error::pyproject.toml ($PY_VERSION) and server.json ($JSON_VERSION) must match. Bump both."
+          exit 1
+        fi 
