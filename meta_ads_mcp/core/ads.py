@@ -3539,3 +3539,7 @@ async def get_account_pages(account_id: str, access_token: Optional[str] = None)
 
 
 
+
+
+# --- Extras Varimarket (carrusel, duplicar, posts organicos) ---
+from . import pwm_extras  # noqa: E402,F401
