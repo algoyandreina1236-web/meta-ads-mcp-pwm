@@ -207,8 +207,7 @@ async def get_page_posts(
         "fields": (
             "id,message,created_time,permalink_url,shares,"
             "reactions.summary(total_count).limit(0),"
-            "comments.summary(total_count).limit(0),"
-            "insights.metric(post_impressions,post_impressions_unique,post_clicks)"
+            "comments.summary(total_count).limit(0)"
         ),
     }
     endpoint = f"{page_id}/posts"
