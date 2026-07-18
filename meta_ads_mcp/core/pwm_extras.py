@@ -6,6 +6,7 @@ paquete open source:
   - duplicate_campaign          : duplicar campañas (escalamiento horizontal)
   - create_page_post            : publicar posts ORGÁNICOS en la página
   - get_page_posts              : listar posts de la página con métricas
+  - upload_ad_video             : subir un VIDEO (por URL pública) para usar en anuncios
 """
 import json
 from typing import Optional, Dict, Any, List, Union
@@ -212,3 +213,86 @@ async def get_page_posts(
     }
     endpoint = f"{page_id}/posts"
     return await make_api_request(endpoint, page_token, params, "GET")
+
+
+@mcp_server.tool()
+@meta_api_tool
+async def upload_ad_video(
+    account_id: str,
+    video_url: str,
+    name: Optional[str] = None,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    access_token: Optional[str] = None,
+) -> str:
+    """
+    Sube un VIDEO a la cuenta publicitaria para usarlo luego en un anuncio
+    (create_ad_creative con el parámetro video_id).
+
+    Meta DESCARGA el video directamente desde la URL pública (no se suben bytes),
+    igual que upload_ad_image con image_url. El video se procesa (transcodifica) de
+    forma ASÍNCRONA: el video_id devuelto NO es usable de inmediato en creativos
+    flexibles/3x3. Antes de usarlo en esos casos, espera a que get_ad_video(video_id)
+    devuelva video_status == "ready" (los creativos de un solo video suelen no verse
+    afectados).
+
+    Args:
+        account_id: Cuenta publicitaria (act_XXXXXXXXX).
+        video_url: URL PÚBLICA del archivo de video (mp4). Debe ser accesible por Meta
+            (sin login/VPN). Rutas locales (file://...) no sirven: súbelo antes a un host público.
+        name: Nombre/archivo opcional del video.
+        title: Título opcional del video.
+        description: Descripción opcional del video.
+        access_token: Token de Meta (opcional; usa el de la sesión).
+
+    Returns:
+        JSON con { success, video_id, account_id, name } o el error de Meta. Pasa el
+        video_id a create_ad_creative (param video_id) para crear el anuncio de video.
+    """
+    if not account_id:
+        return json.dumps({"error": "No account ID provided"}, indent=2)
+    if not video_url:
+        return json.dumps(
+            {"error": "Provide 'video_url' (a public URL to the video file, e.g. an mp4)."},
+            indent=2,
+        )
+
+    account_id = ensure_act_prefix(account_id)
+
+    # Meta obtiene el video desde la URL mediante el parámetro file_url del endpoint /advideos.
+    params: Dict[str, Any] = {"file_url": video_url}
+    if name:
+        params["name"] = name
+    if title:
+        params["title"] = title
+    if description:
+        params["description"] = description
+
+    endpoint = f"{account_id}/advideos"
+    data = await make_api_request(endpoint, access_token, params, "POST")
+
+    # Respuesta típica de éxito: { "id": "<video_id>" }. Normalizamos para exponer video_id.
+    if isinstance(data, dict) and data.get("id"):
+        resolved_name = name
+        if not resolved_name and video_url:
+            try:
+                resolved_name = video_url.split("?")[0].rsplit("/", 1)[-1] or None
+            except Exception:
+                resolved_name = None
+        return json.dumps(
+            {
+                "success": True,
+                "video_id": data["id"],
+                "account_id": account_id,
+                "name": resolved_name,
+                "note": (
+                    "Meta procesa el video de forma asíncrona. Antes de usarlo en un "
+                    "creativo flexible/3x3, verifica get_ad_video(video_id) hasta "
+                    "video_status='ready'."
+                ),
+            },
+            indent=2,
+        )
+
+    # Error u otra forma inesperada: devolver tal cual.
+    return data if isinstance(data, str) else json.dumps(data, indent=2)
