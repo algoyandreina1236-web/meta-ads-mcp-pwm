@@ -1723,7 +1723,7 @@ async def create_ad_creative(
     description: Optional[str] = None,
     descriptions: Optional[List[Union[str, Dict[str, Any]]]] = None,
     image_hashes: Optional[List[str]] = None,
-    video_id: Optional[Union[str, int]] = None,
+    video_id: Optional[str] = None,
     thumbnail_url: Optional[str] = None,
     optimization_type: Optional[str] = None,
     dynamic_creative_spec: Optional[Dict[str, Any]] = None,
@@ -2245,6 +2245,14 @@ async def create_ad_creative(
             or optimization_type or asset_customization_rules
         )
 
+        # [patch] Normaliza video_id a str. Los IDs de video de Meta pueden superar
+        # 2^53; si el parametro se expone como int, el cliente JSON los redondea en
+        # float64 (28161916076733618 -> ...616) y Meta responde
+        # "(#100) Param video_id is not a valid video_id ID". La firma ya es str-only;
+        # esto cubre ademas a cualquier caller que siga mandando un entero.
+        if video_id is not None:
+            video_id = str(video_id)
+
         # Track whether `description` was provided but cannot be rendered in the
         # simple video_data path so we can warn the caller after the API call.
         single_video_description_dropped = bool(
@@ -2759,12 +2767,20 @@ async def create_ad_creative(
 
                     creative_data["object_story_spec"]["link_data"]["call_to_action"] = cta_data
 
-                # Click-to-WhatsApp greeting (page_welcome_message) [patch]
-                if page_welcome_message is not None:
-                    _pwm = page_welcome_message
-                    if isinstance(_pwm, (dict, list)):
-                        _pwm = json.dumps(_pwm, ensure_ascii=False)
-                    creative_data["object_story_spec"]["link_data"]["page_welcome_message"] = _pwm
+        # Click-to-WhatsApp greeting (page_welcome_message) [patch]
+        # Se aplica DESPUES de construir object_story_spec para cubrir por igual
+        # link_data (creativos de imagen) y video_data (creativos de VIDEO). Antes
+        # se inyectaba solo dentro de la rama de imagen, asi que los creativos de
+        # video perdian el saludo en silencio (el anuncio se creaba, pero sin CTWA).
+        if page_welcome_message is not None:
+            _pwm = page_welcome_message
+            if isinstance(_pwm, (dict, list)):
+                _pwm = json.dumps(_pwm, ensure_ascii=False)
+            _oss = creative_data.get("object_story_spec")
+            if isinstance(_oss, dict):
+                for _spec_key in ("link_data", "video_data"):
+                    if isinstance(_oss.get(_spec_key), dict):
+                        _oss[_spec_key]["page_welcome_message"] = _pwm
 
         # Add dynamic creative spec if provided
         if dynamic_creative_spec:
